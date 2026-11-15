@@ -12,7 +12,7 @@ import (
 
 const Name = "azure-resource-retry"
 
-var Version = "0.1.0"
+var Version = "0.1.1"
 
 type HostCall func(string, []byte) ([]byte, error)
 
@@ -121,13 +121,14 @@ func route(req pluginapi.ModelRouteRequest) pluginapi.ModelRouteResponse {
 func executionRequest(req executorRequest, stream bool) modelRequest {
 	path, _ := req.Metadata["request_path"].(string)
 	callerScope, _ := req.Metadata[pluginapi.CallerScopeMetadataKey].(string)
+	// 委托请求使用原始正文，工具 schema 和 payload 配置由目标执行器处理。
 	return modelRequest{
 		HostModelExecutionRequest: pluginapi.HostModelExecutionRequest{
 			EntryProtocol: req.SourceFormat,
 			ExitProtocol:  req.Format,
 			Model:         req.Model,
 			Stream:        stream,
-			Body:          req.Payload,
+			Body:          req.OriginalRequest,
 			Headers:       req.Headers,
 			Query:         req.Query,
 			Alt:           req.Alt,

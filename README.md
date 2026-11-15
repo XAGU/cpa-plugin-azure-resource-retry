@@ -8,7 +8,9 @@ The requested item was created under a different OpenAI resource.
 
 同样识别 `different Azure OpenAI resource` 等在 `OpenAI resource` 前带资源限定词的消息。只有 HTTP 状态码为 400 且错误消息匹配时才触发。
 
-清理内容包括历史输入 item 的 `id`、`encrypted_content`、`item_reference`，顶层 `previous_response_id`，以及 `include` 中的 `reasoning.encrypted_content`。`call_id` 会保留，因此函数调用与函数结果仍保持关联。其他错误不会触发清理；重试只执行一次。
+清理内容包括历史输入 item 的 `id`、`encrypted*` 字段、`item_reference`，顶层 `previous_response_id`，以及 `include` 中的 `reasoning.encrypted_content`。清理仅作用于 `input` 数组第一层 item，保留 `call_id`、`tools`、`arguments` 和工具输出中的嵌套业务字段。其他错误不会触发清理；重试只执行一次。
+
+插件使用原始请求正文委托宿主执行，工具 schema 和用户 payload 配置由目标执行器按原生规则处理。
 
 插件同时支持非流式和 SSE 流式 Responses 请求。流式请求在上游流打开后只转发内容；流中断不会重新执行请求。
 
@@ -80,24 +82,24 @@ cp dist/azure-resource-retry.so plugins/azure-resource-retry.so
 
 推送 `main` 分支、创建 Pull Request 或手动运行工作流会执行测试、静态检查和全部 7 个目标的构建。
 
-推送 `v0.1.0` 形式的标签会自动创建 GitHub Release，并上传：
+推送 `v0.1.1` 形式的标签会自动创建 GitHub Release，并上传：
 
 ```text
-azure-resource-retry_0.1.0_linux_amd64.zip
-azure-resource-retry_0.1.0_linux_arm64.zip
-azure-resource-retry_0.1.0_darwin_amd64.zip
-azure-resource-retry_0.1.0_darwin_arm64.zip
-azure-resource-retry_0.1.0_windows_amd64.zip
-azure-resource-retry_0.1.0_windows_arm64.zip
-azure-resource-retry_0.1.0_freebsd_amd64.zip
+azure-resource-retry_0.1.1_linux_amd64.zip
+azure-resource-retry_0.1.1_linux_arm64.zip
+azure-resource-retry_0.1.1_darwin_amd64.zip
+azure-resource-retry_0.1.1_darwin_arm64.zip
+azure-resource-retry_0.1.1_windows_amd64.zip
+azure-resource-retry_0.1.1_windows_arm64.zip
+azure-resource-retry_0.1.1_freebsd_amd64.zip
 checksums.txt
 ```
 
 ZIP 根目录包含对应平台的动态库和 `LICENSE`。`checksums.txt` 记录所有 ZIP 的 SHA-256 校验值。动态库注册版本与标签中的数字版本一致。
 
 ```sh
-git tag v0.1.0
-git push origin v0.1.0
+git tag v0.1.1
+git push origin v0.1.1
 ```
 
 插件商店从仓库最新 Release 获取可安装版本，发布新版本时无需修改 `registry.json`。
@@ -105,7 +107,7 @@ git push origin v0.1.0
 ## 验证
 
 - `go test ./... ./.github/scripts`、`go vet ./... ./.github/scripts`。
-- 在 Windows 上使用 CLIProxyAPI v8.0.70、插件动态库和模拟 Codex 上游验证正常请求、非流式重试、流式重试、无关错误和单次重试上限。
+- 在 Windows 上使用 CLIProxyAPI v8.0.70、插件动态库和模拟 Codex 上游验证正常请求、非流式重试、流式重试、无关错误和单次重试上限；使用 Codex User-Agent 验证保留工具 schema 与用户 payload 配置。
 - Linux amd64 产物已交叉编译，并检查 ELF 架构、依赖库和 ABI 导出符号；未在 Linux/Docker 或真实 Azure 资源中运行验证。
 
 ## 许可证

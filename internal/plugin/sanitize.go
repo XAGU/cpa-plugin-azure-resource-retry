@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"strings"
 )
 
 func sanitizeHistory(raw []byte) ([]byte, error) {
@@ -56,33 +57,30 @@ func sanitizeHistory(raw []byte) ([]byte, error) {
 }
 
 func sanitizeInput(value any) (any, bool) {
-	changed := false
-	switch current := value.(type) {
-	case []any:
-		kept := current[:0]
-		for _, item := range current {
-			if object, ok := item.(map[string]any); ok && object["type"] == "item_reference" {
-				changed = true
-				continue
-			}
-			cleaned, itemChanged := sanitizeInput(item)
-			kept = append(kept, cleaned)
-			changed = changed || itemChanged
-		}
-		return kept, changed
-	case map[string]any:
-		// 跨资源重放只移除资源内标识；call_id 继续关联工具调用与工具结果。
-		for _, key := range []string{"id", "encrypted_content"} {
-			if _, exists := current[key]; exists {
-				delete(current, key)
-				changed = true
-			}
-		}
-		for key, child := range current {
-			cleaned, childChanged := sanitizeInput(child)
-			current[key] = cleaned
-			changed = changed || childChanged
-		}
+	items, ok := value.([]any)
+	if !ok {
+		return value, false
 	}
-	return value, changed
+	changed := false
+	kept := items[:0]
+	for _, item := range items {
+		object, ok := item.(map[string]any)
+		if !ok {
+			kept = append(kept, item)
+			continue
+		}
+		if object["type"] == "item_reference" {
+			changed = true
+			continue
+		}
+		// 只清理历史 item 自身的资源标识，保留 call_id、工具定义和嵌套业务内容。
+		for key := range object {
+			if key == "id" || strings.HasPrefix(key, "encrypted") {
+				delete(object, key)
+				changed = true
+			}
+		}
+		kept = append(kept, object)
+	}
+	return kept, changed
 }

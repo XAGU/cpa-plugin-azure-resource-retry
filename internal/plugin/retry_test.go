@@ -57,18 +57,25 @@ func TestExecuteWithRetrySanitizesOnlyAfterResourceMismatch(t *testing.T) {
 }
 
 func TestExecuteWithRetryDoesNotRetryOtherErrors(t *testing.T) {
-	request := modelRequest{HostModelExecutionRequest: pluginapi.HostModelExecutionRequest{Body: []byte(`{"input":"hello"}`)}}
-	calls := 0
-	p := New(func(string, []byte) ([]byte, error) {
-		calls++
-		return pluginabi.NewErrorEnvelope("host_call_failed", "invalid parameter", http.StatusBadRequest)
-	})
-	_, err := executeWithRetry[pluginapi.HostModelExecutionResponse](p, pluginabi.MethodHostModelExecute, request)
-	if err == nil {
-		t.Fatal("request unexpectedly succeeded")
-	}
-	if calls != 1 {
-		t.Fatalf("host calls = %d, want 1", calls)
+	for _, message := range []string{
+		"invalid parameter",
+		"OpenAI Responses bad request: Invalid Value: 'tools'. Function 'collaboration.wait_agent' is reserved for use by this model and must match the configured schema.",
+	} {
+		t.Run(message, func(t *testing.T) {
+			request := modelRequest{HostModelExecutionRequest: pluginapi.HostModelExecutionRequest{Body: []byte(`{"input":"hello"}`)}}
+			calls := 0
+			p := New(func(string, []byte) ([]byte, error) {
+				calls++
+				return pluginabi.NewErrorEnvelope("host_call_failed", message, http.StatusBadRequest)
+			})
+			_, err := executeWithRetry[pluginapi.HostModelExecutionResponse](p, pluginabi.MethodHostModelExecute, request)
+			if err == nil {
+				t.Fatal("请求不应成功")
+			}
+			if calls != 1 {
+				t.Fatalf("宿主请求次数 = %d，预期 1", calls)
+			}
+		})
 	}
 }
 

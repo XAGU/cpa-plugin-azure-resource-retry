@@ -2,6 +2,7 @@ package plugin
 
 import (
 	"encoding/json"
+	"reflect"
 	"testing"
 )
 
@@ -39,6 +40,39 @@ func TestSanitizeHistoryKeepsToolCallLinkage(t *testing.T) {
 	output := items[2].(map[string]any)
 	if output["call_id"] != "call_123" {
 		t.Fatalf("output call_id = %#v", output["call_id"])
+	}
+}
+
+func TestSanitizeHistoryPreservesNestedContentAndToolSchemas(t *testing.T) {
+	input := []byte(`{"previous_response_id":"resp_old","tools":[{"type":"function","name":"lookup","parameters":{"type":"object","properties":{"id":{"type":"string"},"timeout_ms":{"type":"number"}}}}],"input":[{"type":"function_call","id":"fc_old","call_id":"call_1","arguments":"{\"id\":\"business-1\"}"},{"type":"function_call_output","id":"out_old","call_id":"call_1","encrypted_content":"opaque","encrypted_metadata":"opaque","output":[{"type":"input_text","text":"result","id":"business-2","encrypted_content":"business-content","metadata":{"id":"business-3"}}]},{"type":"additional_tools","tools":[{"type":"function","name":"lookup","parameters":{"properties":{"id":{"type":"string"},"timeout_ms":{"type":"number"}}}}]}]}`)
+	cleaned, err := sanitizeHistory(input)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var before, after map[string]any
+	if err := json.Unmarshal(input, &before); err != nil {
+		t.Fatal(err)
+	}
+	if err := json.Unmarshal(cleaned, &after); err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(before["tools"], after["tools"]) {
+		t.Fatalf("顶层工具 schema 发生变化: %s", cleaned)
+	}
+	itemsBefore, itemsAfter := before["input"].([]any), after["input"].([]any)
+	for i, item := range itemsAfter {
+		object := item.(map[string]any)
+		for _, key := range []string{"id", "encrypted_content", "encrypted_metadata"} {
+			if _, exists := object[key]; exists {
+				t.Fatalf("第 %d 个历史 item 仍包含 %s", i, key)
+			}
+		}
+		original := itemsBefore[i].(map[string]any)
+		for _, key := range []string{"call_id", "arguments", "output", "tools"} {
+			if !reflect.DeepEqual(object[key], original[key]) {
+				t.Fatalf("第 %d 个 item 的 %s 发生变化: %s", i, key, cleaned)
+			}
+		}
 	}
 }
 
