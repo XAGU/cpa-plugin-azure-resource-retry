@@ -1,0 +1,9 @@
+plugins:
+  enabled: true
+  dir: "plugins"
+  store-sources:
+    - "https://raw.githubusercontent.com/XAGU/cpa-plugin-azure-resource-retry/main/registry.json"
+  configs:
+    azure-resource-retry:
+      enabled: true
+      priority: 100

@@ -1,0 +1,284 @@
+name: 构建与发布
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+    tags:
+      - 'v*'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  PLUGIN_ID: azure-resource-retry
+
+jobs:
+  test:
+    name: 测试与检查
+    runs-on: ubuntu-24.04
+    outputs:
+      version: ${{ steps.metadata.outputs.version }}
+    steps:
+      - name: 检出源码
+        uses: actions/checkout@v5
+
+      - name: 设置 Go
+        uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: 解析版本
+        id: metadata
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ "${GITHUB_REF_TYPE}" == "tag" ]]; then
+            if [[ ! "${GITHUB_REF_NAME}" =~ ^v[0-9]+(\.[0-9]+)+$ ]]; then
+              echo "发布标签必须为 v 加点分数字版本，例如 v0.1.0" >&2
+              exit 1
+            fi
+            VERSION="${GITHUB_REF_NAME#v}"
+          else
+            VERSION="0.0.0-dev"
+          fi
+          echo "version=${VERSION}" >> "${GITHUB_OUTPUT}"
+
+      - name: 运行测试
+        run: go test ./... ./.github/scripts
+
+      - name: 运行静态检查
+        run: go vet ./... ./.github/scripts
+
+  build-linux:
+    name: 构建 Linux ${{ matrix.goarch }}
+    needs: test
+    runs-on: ${{ matrix.runner }}
+    container: golang:1.26.10-bookworm
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - goarch: amd64
+            runner: ubuntu-24.04
+          - goarch: arm64
+            runner: ubuntu-24.04-arm
+    env:
+      VERSION: ${{ needs.test.outputs.version }}
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - name: 检出源码
+        uses: actions/checkout@v5
+
+      - name: 构建动态库
+        run: GOOS=linux GOARCH=${{ matrix.goarch }} sh ./build.sh
+
+      - name: 打包商店资产
+        run: |
+          set -euo pipefail
+          ARCHIVE="dist/${PLUGIN_ID}_${VERSION}_linux_${{ matrix.goarch }}.zip"
+          go run ./.github/scripts/package-release.go \
+            -library "dist/${PLUGIN_ID}.so" -archive "${ARCHIVE}" -checksum "${ARCHIVE}.sha256"
+
+      - name: 上传构建产物
+        uses: actions/upload-artifact@v4
+        with:
+          name: linux-${{ matrix.goarch }}
+          path: |
+            dist/*.zip
+            dist/*.sha256
+          if-no-files-found: error
+
+  build-native:
+    name: 构建 ${{ matrix.goos }} ${{ matrix.goarch }}
+    needs: test
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - goos: darwin
+            goarch: amd64
+            runner: macos-15-intel
+            ext: dylib
+          - goos: darwin
+            goarch: arm64
+            runner: macos-15
+            ext: dylib
+          - goos: windows
+            goarch: amd64
+            runner: windows-2025
+            ext: dll
+    env:
+      VERSION: ${{ needs.test.outputs.version }}
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - name: 检出源码
+        uses: actions/checkout@v5
+
+      - name: 设置 Go
+        uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: 构建动态库
+        run: GOOS=${{ matrix.goos }} GOARCH=${{ matrix.goarch }} sh ./build.sh
+
+      - name: 打包商店资产
+        run: |
+          set -euo pipefail
+          ARCHIVE="dist/${PLUGIN_ID}_${VERSION}_${{ matrix.goos }}_${{ matrix.goarch }}.zip"
+          go run ./.github/scripts/package-release.go \
+            -library "dist/${PLUGIN_ID}.${{ matrix.ext }}" -archive "${ARCHIVE}" -checksum "${ARCHIVE}.sha256"
+
+      - name: 上传构建产物
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.goos }}-${{ matrix.goarch }}
+          path: |
+            dist/*.zip
+            dist/*.sha256
+          if-no-files-found: error
+
+  build-windows-arm64:
+    name: 构建 Windows arm64
+    needs: test
+    runs-on: ubuntu-24.04
+    env:
+      VERSION: ${{ needs.test.outputs.version }}
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - name: 检出源码
+        uses: actions/checkout@v5
+
+      - name: 设置 Go
+        uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: 交叉构建动态库
+        timeout-minutes: 45
+        uses: go-cross/cgo-actions@v1
+        env:
+          GOFLAGS: -trimpath -buildmode=c-shared
+        with:
+          dir: .
+          packages: ./cmd/azure-resource-retry
+          targets: windows-arm64
+          out-dir: dist/windows-arm64
+          output: azure-resource-retry.dll
+          flags: -ldflags=-s -w
+          x-flags: github.com/XAGU/cpa-plugin-azure-resource-retry/internal/plugin.Version=${{ needs.test.outputs.version }}
+
+      - name: 打包商店资产
+        run: |
+          set -euo pipefail
+          ARCHIVE="dist/${PLUGIN_ID}_${VERSION}_windows_arm64.zip"
+          go run ./.github/scripts/package-release.go \
+            -library "dist/windows-arm64/${PLUGIN_ID}.dll" -archive "${ARCHIVE}" -checksum "${ARCHIVE}.sha256"
+
+      - name: 上传构建产物
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows-arm64
+          path: |
+            dist/*.zip
+            dist/*.sha256
+          if-no-files-found: error
+
+  build-freebsd:
+    name: 构建 FreeBSD amd64
+    needs: test
+    runs-on: ubuntu-24.04
+    env:
+      VERSION: ${{ needs.test.outputs.version }}
+      FREEBSD_VERSION: '14.4'
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - name: 检出源码
+        uses: actions/checkout@v5
+
+      - name: 设置 Go
+        uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: 安装交叉构建工具
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends clang lld
+
+      - name: 交叉构建动态库
+        timeout-minutes: 45
+        run: |
+          set -euo pipefail
+          SYSROOT="${RUNNER_TEMP}/freebsd-sysroot"
+          mkdir -p "${SYSROOT}"
+          curl -fsSL --retry 3 -o "${RUNNER_TEMP}/base.txz" \
+            "https://download.freebsd.org/releases/amd64/${FREEBSD_VERSION}-RELEASE/base.txz"
+          sudo tar -xf "${RUNNER_TEMP}/base.txz" -C "${SYSROOT}"
+          GOOS=freebsd GOARCH=amd64 CGO_LDFLAGS="-fuse-ld=lld" \
+            CC="clang --target=x86_64-unknown-freebsd${FREEBSD_VERSION} --sysroot=${SYSROOT}" \
+            sh ./build.sh
+
+      - name: 打包商店资产
+        run: |
+          set -euo pipefail
+          ARCHIVE="dist/${PLUGIN_ID}_${VERSION}_freebsd_amd64.zip"
+          go run ./.github/scripts/package-release.go \
+            -library "dist/${PLUGIN_ID}.so" -archive "${ARCHIVE}" -checksum "${ARCHIVE}.sha256"
+
+      - name: 上传构建产物
+        uses: actions/upload-artifact@v4
+        with:
+          name: freebsd-amd64
+          path: |
+            dist/*.zip
+            dist/*.sha256
+          if-no-files-found: error
+
+  release:
+    name: 发布 GitHub Release
+    if: github.ref_type == 'tag' && startsWith(github.ref_name, 'v')
+    needs: [build-linux, build-native, build-windows-arm64, build-freebsd]
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    steps:
+      - name: 下载构建产物
+        uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+
+      - name: 发布版本
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          sort dist/*.sha256 > dist/checksums.txt
+          (cd dist && sha256sum --check checksums.txt)
+          if gh release view "${GITHUB_REF_NAME}" >/dev/null 2>&1; then
+            gh release upload "${GITHUB_REF_NAME}" dist/*.zip dist/checksums.txt --clobber
+          else
+            gh release create "${GITHUB_REF_NAME}" dist/*.zip dist/checksums.txt \
+              --verify-tag \
+              --title "${GITHUB_REF_NAME}" \
+              --generate-notes
+          fi

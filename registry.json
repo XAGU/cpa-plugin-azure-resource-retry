@@ -1,0 +1,15 @@
+{
+  "schema_version": 1,
+  "plugins": [
+    {
+      "id": "azure-resource-retry",
+      "name": "Azure Resource Retry",
+      "description": "仅在 Responses 上游返回跨 OpenAI 资源的 item HTTP 400 错误时，清理历史标识并重试一次。",
+      "author": "XAGU",
+      "repository": "https://github.com/XAGU/cpa-plugin-azure-resource-retry",
+      "homepage": "https://github.com/XAGU/cpa-plugin-azure-resource-retry",
+      "license": "MIT",
+      "tags": ["Codex", "Azure", "Responses", "Retry"]
+    }
+  ]
+}
